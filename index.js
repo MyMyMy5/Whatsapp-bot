@@ -449,22 +449,33 @@ async function processAdminCommand(command, userId) {
               const newValue = rest.join(' ').trim();
               return functions.updateMenuOptionInMenu(menuName, optionNumber, newText, newValue, menus);
           }
-          case '/admin_add_faq': {
-              const commandText = command.slice(command.indexOf('\n') + 1);
-              if (!commandText || commandText.trim() === '') {
-                  return "❌ פורמט שגוי.\n\nשימוש:\n/admin_add_faq\n[שאלה]\n[תשובה]\n\nדוגמה:\n/admin_add_faq\nאיך להירשם לקורס?\nכדי להירשם לקורס צריך לעבור לאתר האוניברסיטה...";
-              }
-              
-              const lines = commandText.split('\n').map(line => line.trim()).filter(Boolean);
-              if (lines.length < 2) {
-                  return "❌ חייבות להיות לפחות 2 שורות: שאלה ותשובה.";
-              }
-              
-              const questionText = lines[0];
-              const answerText = lines.slice(1).join('\n');
-              
-              return functions.addFAQOption(questionText, answerText, menus);
-          }
+        case '/admin_add_faq': {
+            const commandText = command.slice(command.indexOf('\n') + 1);
+            if (!commandText || commandText.trim() === '') {
+                return "❌ פורמט שגוי.\n\nשימוש:\n/admin_add_faq\n[שאלה]\n[תשובה]\n\nדוגמה:\n/admin_add_faq\nאיך להירשם לקורס?\nכדי להירשם לקורס צריך לעבור לאתר האוניברסיטה...";
+            }
+            
+            // NEW: Split without removing empty lines to preserve paragraphs
+            const lines = commandText.split('\n');
+            
+            // NEW: Only trim and filter for the question (first non-empty line)
+            const nonEmptyLines = lines.filter(line => line.trim() !== '');
+            if (nonEmptyLines.length < 2) {
+                return "❌ חייבות להיות לפחות 2 שורות: שאלה ותשובה.";
+            }
+            
+            // Get the first non-empty line as the question
+            const questionText = nonEmptyLines[0].trim();
+            
+            // Find where the question ends in the original lines array
+            const questionIndex = lines.findIndex(line => line.trim() === questionText);
+            
+            // Get everything after the question, preserving empty lines for paragraphs
+            const answerLines = lines.slice(questionIndex + 1);
+            const answerText = answerLines.join('\n');
+            
+            return functions.addFAQOption(questionText, answerText, menus);
+        }
         case '/admin_remove_menu_option_from_menu': {
             if (parts.length < 3) {
                 return "❌ פורמט שגוי.\nשימוש: /admin_remove_menu_option_from_menu [שם] [מס׳]";
