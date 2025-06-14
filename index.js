@@ -963,7 +963,7 @@ cron.schedule(
       //    (replace with whatever you need)
 
       // 👉 2nd scheduled action
-      await functions.approveGroupRequests(null, {}, client);
+      //await functions.approveGroupRequests(null, {}, client);
       //    (replace with whatever you need)
 
       console.log('[CRON] 04:00 job completed');
