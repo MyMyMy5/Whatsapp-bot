@@ -257,13 +257,15 @@ async function processAdminCommand(command, userId) {
 
 ━━━━━━━━━━━━━━
 🔢 *אפשרויות בתפריטים אחרים*
-/admin_add_menu_option_to_menu [שם] [מס׳] [טקסט] [תגובה|nextMenu:תפריט]
+/admin_add_menu_option_to_menu [שם] [מס׳] [טקסט]
+[תגובה|nextMenu:תפריט]
 
 התגובה היא מה שישלח לאדם ברגע שהוא יבחר באפשרות הזאת
 
 *אפשרות שמחזירה תגובה(לדוגמה קישור):*
 
-/admin_add_menu_option_to_menu additional_links 6 "Discord של הקהילה" https://discord.gg/studnet
+/admin_add_menu_option_to_menu additional_links 6 "Discord של הקהילה" 
+https://discord.gg/studnet
 
 *מה זה עושה:*
 
@@ -355,32 +357,6 @@ async function processAdminCommand(command, userId) {
 /admin_list_hs_subjects  
 
 ━━━━━━━━━━━━━━
-🛡️ *רשימה שחורה*
-
-/admin_blacklist_add [userId]
-  
-/admin_blacklist_add 972501234567
-
-/admin_blacklist_remove [userId]  
-
-/admin_blacklist_remove 972501234567
-
-/admin_blacklist_list  
-
-/admin_resolve_lid [@lid]  
-
-/admin_resolve_lid 12345@lid
-
-━━━━━━━━━━━━━━
-👥 *חברות בקבוצות*
-
-/admin_scan_groups  
-
-/admin_approve_requests [id_קבוצה]  
-
-/admin_approve_requests 120@g.us   (ללא id – יאשר לכל הקבוצות)
-
-━━━━━━━━━━━━━━
 📢 *שידור*
 
 /admin_broadcast [הודעה]  
@@ -389,9 +365,9 @@ async function processAdminCommand(command, userId) {
 
 ━━━━━━━━━━━━━━
 🔄 *כלים*
-/admin_reload  
-
 /admin_status  
+
+/admin_scan_groups
 
 *האפשרויות להשכלת מורים:*
 1. סטודנטים
@@ -431,24 +407,154 @@ async function processAdminCommand(command, userId) {
             return functions.listMenuOptions(parts[1], menus);
         /*──────────  **NEW**  PER-MENU OPTION CRUD COMMANDS  ────────────────*/
         case '/admin_add_menu_option_to_menu': {
-              if (parts.length < 5) {
-                  return "❌ פורמט שגוי.\nשימוש: /admin_add_menu_option_to_menu [שם] [מס׳] [טקסט] [תגובה/nextMenu:תפריט]";
-              }
-              const [menuName, optionNumber, ...rest] = parts.slice(1);
-              const text  = rest.shift();
-              const value = rest.join(' ').trim();
-              return functions.addMenuOptionToMenu(menuName, optionNumber, text, value, menus);
-          }
+            // Parse the multi-line format: /admin_add_menu_option_to_menu [שם] [מס׳] [טקסט]\n[תגובה|nextMenu:תפריט]
+            const commandText = command.trim();
+            const lines = commandText.split('\n');
+            
+            if (lines.length < 2) {
+                return "❌ פורמט שגוי.\n\n" +
+                    "שימוש:\n/admin_add_menu_option_to_menu [שם] [מס׳] [טקסט]\n[תגובה|nextMenu:תפריט]\n\n" +
+                    "דוגמאות:\n" +
+                    "• תגובה רגילה:\n/admin_add_menu_option_to_menu links_menu 1 אתר האוניברסיטה\nhttps://openu.ac.il\n\n" +
+                    "• תגובה מרובת שורות:\n/admin_add_menu_option_to_menu additional_links 6 \"Discord של הקהילה\"\nOpu.Groups https://discord.gg/studnet\n\nהיי\n\nשלום\n\n" +
+                    "• ניווט לתפריט:\n/admin_add_menu_option_to_menu teachers_menu 3 חזור לתפריט הראשי\nnextMenu:main";
+            }
+            
+            // Parse the first line for command and parameters
+            const firstLine = lines[0].trim();
+            const firstLineParts = firstLine.split(/\s+/);
+            
+            if (firstLineParts.length < 4) {
+                return "❌ פורמט שגוי בשורה הראשונה.\n\n" +
+                    "נדרש: /admin_add_menu_option_to_menu [שם_תפריט] [מספר] [טקסט]\n" +
+                    "קיבלתי: " + firstLine;
+            }
+            
+            const menuName = firstLineParts[1];
+            const optionNumber = firstLineParts[2];
+            const text = firstLineParts.slice(3).join(' ').replace(/^"|"$/g, ''); // Remove quotes and join all remaining parts as text
+            
+            // Get the value from all remaining lines (preserving line breaks)
+            const valueLines = lines.slice(1);
+            const value = valueLines.join('\n').trim();
+            
+            // Validate we have all required parameters
+            if (!menuName || !optionNumber || !text || !value) {
+                return "❌ חסרים פרמטרים נדרשים.\n\n" +
+                    "נדרש: שם_תפריט, מספר_אפשרות, טקסט_להצגה, תגובה_או_ניווט\n" +
+                    "קיבלתי: " + `menuName='${menuName}', optionNumber='${optionNumber}', text='${text}', value='${value}'`;
+            }
+            
+            console.log(`[ADMIN_CMD] Adding menu option: menu='${menuName}', num='${optionNumber}', text='${text}', value='${value}'`);
+            return functions.addMenuOptionToMenu(menuName, optionNumber, text, value, menus);
+        }
 
         case '/admin_update_menu_option_in_menu': {
-              if (parts.length < 5) {
-                  return "❌ פורמט שגוי.\nשימוש: /admin_update_menu_option_in_menu [שם] [מס׳] [טקסט_חדש] [תגובה_חדשה/nextMenu:תפריט]";
-              }
-              const [menuName, optionNumber, ...rest] = parts.slice(1);
-              const newText  = rest.shift();
-              const newValue = rest.join(' ').trim();
-              return functions.updateMenuOptionInMenu(menuName, optionNumber, newText, newValue, menus);
-          }
+            // Parse the multi-line format: /admin_update_menu_option_in_menu [שם] [מס׳] [טקסט]\n[תגובה|nextMenu:תפריט]
+            const commandText = command.trim();
+            const lines = commandText.split('\n');
+            
+            // Check if it's single-line or multi-line format
+            if (lines.length === 1) {
+                // Single-line format: /admin_update_menu_option_in_menu [שם] [מס׳] [טקסט] [תגובה|nextMenu:תפריט]
+                const parts = commandText.trim().split(/\s+/);
+                
+                if (parts.length < 5) {
+                    return "❌ פורמט שגוי.\n\n" +
+                        "שימוש (שורה אחת):\n/admin_update_menu_option_in_menu [שם_תפריט] [מספר] [טקסט_חדש] [תגובה_חדשה או nextMenu:תפריט]\n\n" +
+                        "שימוש (מרובת שורות):\n/admin_update_menu_option_in_menu [שם_תפריט] [מספר] [טקסט_חדש]\n[תגובה_חדשה או nextMenu:תפריט]\n\n" +
+                        "דוגמאות:\n" +
+                        "• עדכון לתגובה בשורה אחת:\n/admin_update_menu_option_in_menu links_menu 1 \"אתר האו״פ\" https://www.openu.ac.il\n\n" +
+                        "• עדכון לתגובה מרובת שורות:\n/admin_update_menu_option_in_menu additional_links 6 \"Discord של הקהילה\"\nOpu.Groups https://discord.gg/studnet\n\nהיי\n\nשלום\n\n" +
+                        "• עדכון לניווט:\n/admin_update_menu_option_in_menu info_menu 5 \"חזור\" nextMenu:main";
+                }
+                
+                const menuName = parts[1];
+                const optionNumber = parts[2];
+                
+                // Handle multi-word text and value properly
+                const remainingParts = parts.slice(3);
+                let newText, newValue;
+                
+                // Check if text is quoted
+                if (remainingParts[0] && remainingParts[0].startsWith('"')) {
+                    // Find the closing quote
+                    let textParts = [];
+                    let foundClosingQuote = false;
+                    let endIndex = 0;
+                    
+                    for (let i = 0; i < remainingParts.length; i++) {
+                        textParts.push(remainingParts[i]);
+                        if (remainingParts[i].endsWith('"') && !remainingParts[i].endsWith('\\"')) {
+                            foundClosingQuote = true;
+                            endIndex = i;
+                            break;
+                        }
+                    }
+                    
+                    if (foundClosingQuote) {
+                        newText = textParts.join(' ').replace(/^"|"$/g, '');
+                        newValue = remainingParts.slice(endIndex + 1).join(' ').trim();
+                    } else {
+                        // No closing quote found, treat first part as text
+                        newText = remainingParts[0].replace(/^"/, '');
+                        newValue = remainingParts.slice(1).join(' ').trim();
+                    }
+                } else {
+                    // Not quoted, use first part as text
+                    newText = remainingParts[0];
+                    newValue = remainingParts.slice(1).join(' ').trim();
+                }
+                
+                // Validate we have all required parameters
+                if (!menuName || !optionNumber || !newText || !newValue) {
+                    return "❌ חסרים פרמטרים נדרשים.\n\n" +
+                        "נדרש: שם_תפריט, מספר_אפשרות, טקסט_חדש, תגובה_או_ניווט_חדש\n" +
+                        "קיבלתי: " + `menuName='${menuName}', optionNumber='${optionNumber}', newText='${newText}', newValue='${newValue}'`;
+                }
+                
+                console.log(`[ADMIN_CMD] Updating menu option (single-line): menu='${menuName}', num='${optionNumber}', newText='${newText}', newValue='${newValue}'`);
+                return functions.updateMenuOptionInMenu(menuName, optionNumber, newText, newValue, menus);
+                
+            } else {
+                // Multi-line format: /admin_update_menu_option_in_menu [שם] [מס׳] [טקסט]\n[תגובה|nextMenu:תפריט]
+                if (lines.length < 2) {
+                    return "❌ פורמט שגוי.\n\n" +
+                        "שימוש (מרובת שורות):\n/admin_update_menu_option_in_menu [שם_תפריט] [מספר] [טקסט_חדש]\n[תגובה_חדשה או nextMenu:תפריט]\n\n" +
+                        "דוגמאות:\n" +
+                        "• עדכון לתגובה מרובת שורות:\n/admin_update_menu_option_in_menu additional_links 6 \"Discord של הקהילה\"\nOpu.Groups https://discord.gg/studnet\n\nהיי\n\nשלום\n\n" +
+                        "• עדכון לניווט:\n/admin_update_menu_option_in_menu teachers_menu 3 \"חזור לתפריט הראשי\"\nnextMenu:main";
+                }
+                
+                // Parse the first line for command and parameters
+                const firstLine = lines[0].trim();
+                const firstLineParts = firstLine.split(/\s+/);
+                
+                if (firstLineParts.length < 4) {
+                    return "❌ פורמט שגוי בשורה הראשונה.\n\n" +
+                        "נדרש: /admin_update_menu_option_in_menu [שם_תפריט] [מספר] [טקסט_חדש]\n" +
+                        "קיבלתי: " + firstLine;
+                }
+                
+                const menuName = firstLineParts[1];
+                const optionNumber = firstLineParts[2];
+                const newText = firstLineParts.slice(3).join(' ').replace(/^"|"$/g, ''); // Remove quotes and join all remaining parts as text
+                
+                // Get the value from all remaining lines (preserving line breaks)
+                const valueLines = lines.slice(1);
+                const newValue = valueLines.join('\n').trim();
+                
+                // Validate we have all required parameters
+                if (!menuName || !optionNumber || !newText || !newValue) {
+                    return "❌ חסרים פרמטרים נדרשים.\n\n" +
+                        "נדרש: שם_תפריט, מספר_אפשרות, טקסט_חדש, תגובה_או_ניווט_חדש\n" +
+                        "קיבלתי: " + `menuName='${menuName}', optionNumber='${optionNumber}', newText='${newText}', newValue='${newValue}'`;
+                }
+                
+                console.log(`[ADMIN_CMD] Updating menu option (multi-line): menu='${menuName}', num='${optionNumber}', newText='${newText}', newValue='${newValue}'`);
+                return functions.updateMenuOptionInMenu(menuName, optionNumber, newText, newValue, menus);
+            }
+        }
         case '/admin_add_faq': {
             const commandText = command.slice(command.indexOf('\n') + 1);
             if (!commandText || commandText.trim() === '') {
@@ -478,9 +584,17 @@ async function processAdminCommand(command, userId) {
         }
         case '/admin_remove_menu_option_from_menu': {
             if (parts.length < 3) {
-                return "❌ פורמט שגוי.\nשימוש: /admin_remove_menu_option_from_menu [שם] [מס׳]";
+                return "❌ פורמט שגוי.\n\n" +
+                    "שימוש: /admin_remove_menu_option_from_menu [שם_תפריט] [מספר_אפשרות]\n\n" +
+                    "דוגמה:\n" +
+                    "/admin_remove_menu_option_from_menu links_menu 1";
             }
-        return functions.removeMenuOptionFromMenu(parts[1], parts[2], menus);
+            
+            const menuName = parts[1];
+            const optionNumber = parts[2];
+            
+            console.log(`[ADMIN_CMD] Removing menu option: menu='${menuName}', num='${optionNumber}'`);
+            return functions.removeMenuOptionFromMenu(menuName, optionNumber, menus);
         }
 
         // Course Links CRUD operations
@@ -564,12 +678,47 @@ async function processAdminCommand(command, userId) {
             return await functions.approveGroupRequests(groupId, {}, client);
 
         // Broadcast operations
-        case '/admin_broadcast':
-            const broadcastText = parts.slice(1).join(' ');
-            if (!broadcastText || broadcastText.trim() === '') {
-                return "❌ אנא הזן הודעה לשידור. שימוש: /admin_broadcast [הודעה]";
+        case '/admin_broadcast': {
+            // Handle multi-line broadcast messages
+            const commandText = command.trim();
+            const lines = commandText.split('\n');
+            
+            // Check if there's content after the command
+            if (lines.length === 1) {
+                // Single line format: /admin_broadcast [message] - extract text after the command
+                const firstLine = lines[0];
+                const commandMatch = firstLine.match(/^\/admin_broadcast\s+(.+)$/);
+                if (!commandMatch || !commandMatch[1] || commandMatch[1].trim() === '') {
+                    return "❌ אנא הזן הודעה לשידור.\n\nשימוש:\n/admin_broadcast [הודעה]\n\nאו:\n/admin_broadcast\n[הודעה בשורות מרובות]\n[שורה שנייה]\n[שורה שלישית]";
+                }
+                const broadcastText = commandMatch[1].trim();
+                return await functions.broadcastMessage(broadcastText, botChatsPath, client);
+            } else {
+                // Multi-line format: /admin_broadcast\n[multi-line message]
+                const firstLine = lines[0].trim();
+                
+                // Check if first line has content after the command or if it's just the command
+                const commandMatch = firstLine.match(/^\/admin_broadcast(\s+(.+))?$/);
+                if (!commandMatch) {
+                    return "❌ פורמט פקודה שגוי.";
+                }
+                
+                let broadcastText = '';
+                if (commandMatch[2]) {
+                    // First line has content after command, include it
+                    broadcastText = commandMatch[2] + '\n' + lines.slice(1).join('\n');
+                } else {
+                    // First line is just the command, use only the following lines
+                    broadcastText = lines.slice(1).join('\n');
+                }
+                
+                broadcastText = broadcastText.trim();
+                if (!broadcastText || broadcastText === '') {
+                    return "❌ אנא הזן הודעה לשידור.\n\nשימוש:\n/admin_broadcast [הודעה]\n\nאו:\n/admin_broadcast\n[הודעה בשורות מרובות]\n[שורה שנייה]\n[שורה שלישית]";
+                }
+                return await functions.broadcastMessage(broadcastText, botChatsPath, client);
             }
-            return await functions.broadcastMessage(broadcastText.trim(), botChatsPath, client);
+        }
 
         // System operations
         case '/admin_reload':
@@ -691,13 +840,15 @@ client.on("message", async (message) => {
       return;
     }
 
-    // FIX: Add message deduplication check
+    // FIX: Enhanced message deduplication check with longer window
     if (functions.isMessageBeingProcessed(userId, messageId, messageText, messageProcessingMap)) {
+      console.log(`[DUPLICATE_BLOCKED] Skipping duplicate message from ${userId}`);
       return; // Skip duplicate messages
     }
 
-    // FIX: Add user cooldown check
+    // FIX: Add user cooldown check with longer cooldown period
     if (functions.isUserOnCooldown(userId, userCooldownMap)) {
+      console.log(`[COOLDOWN_BLOCKED] User ${userId} is on cooldown`);
       return; // Skip rapid successive messages
     }
 
@@ -711,27 +862,44 @@ client.on("message", async (message) => {
     if (messageText.startsWith('/admin_')) {
       const response = await processAdminCommand(messageText, userId);
       await message.reply(response);
+      // FIX: Clean up processing map after admin command
+      const cleanupKey = `${userId}_${messageId}_${messageText}`;
+      if (messageProcessingMap.has(cleanupKey)) {
+        messageProcessingMap.delete(cleanupKey);
+        console.log(`[CLEANUP] Removed processing entry for ${userId}`);
+      }
       return;
     }
 
-    // FIX: Enhanced session management with atomic operations
+    // FIX: Enhanced session management with atomic operations and mutex-like behavior
     let session = userSessions.get(userId);
     let isNewUser = false;
     
     if (!session) {
-      // FIX: Create session with comprehensive state management and atomic assignment
+      // FIX: Create session with comprehensive state management and processing lock
       session = {
         currentMenu: "main",
         menuHistory: [],
         selectedSemester: null,
         state: "menu", // Possible states: "menu", "viewing_response", "waiting_for_course", "viewing_teachers"
         createdAt: Date.now(),
-        isProcessingFirstMessage: true // FIX: Flag to prevent duplicate processing
+        isProcessingFirstMessage: true, // FIX: Flag to prevent duplicate processing
+        processingLock: false // FIX: Additional lock to prevent concurrent processing
       };
       userSessions.set(userId, session);
       isNewUser = true;
       console.log(`[NEW_USER] Created session for ${userId}`);
     }
+
+    // FIX: Check if session is already being processed
+    if (session.processingLock) {
+      console.log(`[PROCESSING_LOCK] Session for ${userId} is already being processed`);
+      return;
+    }
+
+    // FIX: Set processing lock
+    session.processingLock = true;
+    userSessions.set(userId, session);
 
     let response = "";
     const currentMenuData = menus[session.currentMenu];
@@ -748,8 +916,16 @@ client.on("message", async (message) => {
       response = functions.createMenu(userId, userSessions, menus);
       console.log(`[NEW_USER_REPLY] Sending main menu to ${userId}`);
       await message.reply(response);
-      // FIX: Add a small delay to ensure message is processed
-      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // FIX: Clear processing lock and cleanup
+      session.processingLock = false;
+      userSessions.set(userId, session);
+      const cleanupKey = `${userId}_${messageId}_${messageText}`;
+      if (messageProcessingMap.has(cleanupKey)) {
+        messageProcessingMap.delete(cleanupKey);
+        console.log(`[CLEANUP] Removed processing entry for ${userId}`);
+      }
+      
       console.log(`[NEW_USER_COMPLETE] Finished processing first message for ${userId}`);
       return; // CRITICAL: Prevent any further processing
     }
@@ -936,14 +1112,38 @@ client.on("message", async (message) => {
       }
     }
 
-    // Update session state
+    // FIX: Update session state and clear processing lock
+    session.processingLock = false;
     userSessions.set(userId, session);
     
     // Send response
     console.log(`[REPLY] Sending response to ${userId}: "${response.substring(0, 50)}..."`);
     await message.reply(response);
+    
+    // FIX: Clean up processing map after successful processing
+    const cleanupKey = `${userId}_${messageId}_${messageText}`;
+      if (messageProcessingMap.has(cleanupKey)) {
+        messageProcessingMap.delete(cleanupKey);
+        console.log(`[CLEANUP] Removed processing entry for ${userId}`);
+      }
+    
   } catch (error) {
     console.error(`[ERROR] Message handler error for user ${message.from}:`, error);
+    
+    // FIX: Clear processing lock on error
+    const session = userSessions.get(message.from);
+    if (session) {
+      session.processingLock = false;
+      userSessions.set(message.from, session);
+    }
+    
+    // FIX: Clean up processing map on error
+    const errorCleanupKey = `${message.from}_${message.id.id}_${message.body.trim()}`;
+    if (messageProcessingMap.has(errorCleanupKey)) {
+      messageProcessingMap.delete(errorCleanupKey);
+      console.log(`[CLEANUP] Removed processing entry for ${message.from}`);
+    }
+    
     // FIX: Graceful error handling with user feedback
     try {
       await message.reply("❌ אירעה שגיאה. אנא נסה שוב או פנה לתמיכה טכנית. \n\n 💡 להמשיך, אנא השתמש:\n• 'חזור' - חזרה לתפריט הקודם\n• '0' - חזרה לתפריט הראשי");
