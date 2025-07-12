@@ -33,6 +33,14 @@ function isUserOnCooldown(userId, userCooldownMap) {
     }
     userCooldownMap.set(userId, now);
     return false;
+// FIX: New function to manually clean up processing map
+function cleanupProcessingMap(userId, messageId, messageText, messageProcessingMap) {
+    const messageKey = `${userId}_${messageId}_${messageText}`;
+    if (messageProcessingMap.has(messageKey)) {
+        messageProcessingMap.delete(messageKey);
+        console.log(`[CLEANUP] Removed processing entry for ${userId}`);
+    }
+}
 }
 
 function isAdmin(userId, ADMIN_PHONE_NUMBERS) {
@@ -279,26 +287,41 @@ function listCourseLinks(semester, courseLinks) {
             let response = `📚 *קישורי קורסים לסמסטר ${semester}:*\n\n`;
             
             Object.keys(courses).sort().forEach(courseNum => {
-                response += `${courseNum}: ${courses[courseNum]}\n`;
+                // Simple format - course number followed by link on separate lines
+                const link = courses[courseNum];
+                response += `קורס ${courseNum}:\n${link}\n\n`;
             });
 
+            response += `📊 סיכום: ${Object.keys(courses).length} קורסים זמינים`;
             return response;
         } else {
             if (Object.keys(courseLinks).length === 0) {
                 return "📚 אין קישורי קורסים במערכת.";
             }
 
-            let response = "📚 *כל קישורי הקורסים:*\n\n";
-            
-            Object.keys(courseLinks).sort().forEach(sem => {
-                const courses = courseLinks[sem];
-                response += `📅 *${sem}:*\n`;
-                Object.keys(courses).sort().forEach(courseNum => {
-                    response += `  ${courseNum}: ${courses[courseNum]}\n`;
-                });
-                response += "\n";
+            // Count total courses
+            let totalCourses = 0;
+            Object.keys(courseLinks).forEach(sem => {
+                totalCourses += Object.keys(courseLinks[sem]).length;
             });
 
+            // Build a summary message with semester breakdown
+            let response = "📚 *קישורי קורסים - סקירה כללית*\n\n";
+            response += "⚠️ *הודעה חשובה:*\nבגלל מגבלות WhatsApp, הצגת כל הקישורים בהודעה אחת עלולה לגרום לבעיות בלחיצה על הקישורים.\n\n";
+            response += "💡 *מומלץ:* השתמש בתפריט בוט או בפקודות ספציפיות לסמסטר:\n\n";
+            
+            Object.keys(courseLinks).sort().forEach(sem => {
+                const courseCount = Object.keys(courseLinks[sem]).length;
+                response += `📅 *${sem}* - ${courseCount} קורסים\n`;
+                response += `   ▫️ הקלד "${sem}" בתפריט\n`;
+                response += `   ▫️ או: /admin_list_course_links ${sem}\n\n`;
+            });
+
+            response += `📊 *סיכום כללי:*\n`;
+            response += `🎯 ${totalCourses} קורסים בסך הכל\n`;
+            response += `📅 ${Object.keys(courseLinks).length} סמסטרים זמינים\n\n`;
+            response += `🔍 *עצה:* לקבלת כל הקישורים הפעילים, השתמש בתפריט הבוט או בחר סמסטר ספציפי.`;
+            
             return response;
         }
     } catch (error) {
@@ -737,60 +760,52 @@ async function getGroupParticipants(groupId, client) {
   try {
     console.log(`Getting participants for group: ${groupId}`);
     
-    const participants = await client.pupPage.evaluate(async (gid) => {
-      try {
-        const chat = await window.Store.Chat.get(gid);
-        if (!chat) {
-          return { error: `Chat not found: ${gid}` };
-        }
-
-        const groupName = chat.name || "Unknown Group";
-        
-        // Defensive participant handling
-        let participants = [];
-        if (chat.groupMetadata && chat.groupMetadata.participants) {
-          const rawParticipants = chat.groupMetadata.participants.getModelsArray();
-          
-          participants = rawParticipants
-            .filter(p => p && p.id) // Filter out null/undefined participants
-            .map(p => {
-              try {
-                return {
-                  id: p.id && p.id._serialized ? p.id._serialized : 'unknown',
-                  isAdmin: Boolean(p.isAdmin),
-                  isSuperAdmin: Boolean(p.isSuperAdmin)
-                };
-              } catch (mapError) {
-                console.warn('Error processing participant:', mapError);
-                return null;
-              }
-            })
-            .filter(p => p !== null && p.id !== 'unknown'); // Remove failed mappings
-        }
-
-        return {
-          name: groupName,
-          participants: participants
-        };
-      } catch (error) {
-        return { 
-          error: error.message, 
-          stack: error.stack,
-          name: "Error processing group"
-        };
-      }
-    }, groupId);
-
-    if (participants.error) {
-      console.error(`Error getting participants: ${participants.error}`);
+    // Use the newer whatsapp-web.js API directly
+    const chat = await client.getChatById(groupId);
+    if (!chat || !chat.isGroup) {
+      console.error(`Chat not found or not a group: ${groupId}`);
       return { name: "Error", participants: [] };
     }
 
-    console.log(`Group: ${participants.name} | Total participants: ${participants.participants.length}`);
-    return participants;
+    const groupName = chat.name || "Unknown Group";
+    console.log(`Found group: ${groupName}`);
+
+    // Try to fetch fresh participant data
+    try {
+      await chat.fetchParticipants();
+      console.log(`Fetched fresh participants for ${groupName}`);
+    } catch (fetchError) {
+      console.warn(`Could not fetch fresh participants for ${groupName}: ${fetchError.message}`);
+    }
+
+    // Get participants using the modern API
+    const participants = chat.participants || [];
+    console.log(`Raw participants count: ${participants.length}`);
+
+    const formattedParticipants = participants
+      .filter(p => p && p.id) // Filter out null/undefined participants
+      .map(p => {
+        try {
+          return {
+            id: p.id._serialized || p.id,
+            isAdmin: Boolean(p.isAdmin),
+            isSuperAdmin: Boolean(p.isSuperAdmin)
+          };
+        } catch (mapError) {
+          console.warn('Error processing participant:', mapError);
+          return null;
+        }
+      })
+      .filter(p => p !== null && p.id && p.id !== 'unknown'); // Remove failed mappings
+
+    console.log(`Group: ${groupName} | Processed participants: ${formattedParticipants.length}`);
+    return {
+      name: groupName,
+      participants: formattedParticipants
+    };
     
   } catch (error) {
-    console.error(`Error in getGroupParticipants: ${error.message}`);
+    console.error(`Error in getGroupParticipants for ${groupId}: ${error.message}`);
     return { name: "Error", participants: [] };
   }
 }
@@ -851,87 +866,157 @@ async function getParticipantsForGroup(groupId, client) {
 
 async function scanGroupMembers(client, groupMembersPath, groupMembers) {
   try {
-    console.log("Starting group member scan...");
-    const chats = await client.getChats();
+    console.log("Starting group member scan with updated whatsapp-web.js compatibility...");
+    
+    // Get all chats with better error handling
+    let chats = [];
+    try {
+      chats = await client.getChats();
+      console.log(`Successfully retrieved ${chats.length} total chats`);
+    } catch (chatError) {
+      console.error('Error getting chats:', chatError);
+      return '❌ שגיאה בקבלת רשימת הצ\'אטים. ודא שהבוט מחובר לווטסאפ.';
+    }
+
+    // Filter groups with improved detection
     const groups = chats.filter(chat => {
       try {
-        return chat && chat.isGroup !== undefined ? chat.isGroup : 
-               (chat.id && chat.id._serialized && chat.id._serialized.endsWith('@g.us'));
+        // Multiple methods to detect groups
+        if (chat.isGroup === true) return true;
+        if (chat.id && chat.id._serialized && chat.id._serialized.endsWith('@g.us')) return true;
+        if (chat.groupMetadata) return true;
+        return false;
       } catch (e) {
+        console.warn(`Error checking if chat is group: ${e.message}`);
         return false;
       }
     });
     
-    console.log(`Found ${groups.length} groups to scan`);
+    console.log(`Found ${groups.length} groups to scan (out of ${chats.length} total chats)`);
+    
+    if (groups.length === 0) {
+      return '⚠️ לא נמצאו קבוצות לסריקה. ודא שהבוט חבר לקבוצות.';
+    }
+
     const uniqueUsers = new Set();
     const failedGroups = [];
+    const processedGroups = [];
+    let totalParticipants = 0;
 
-    for (const group of groups) {
+    // Process groups with better error handling and rate limiting
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i];
       try {
-        console.log(`Processing group: ${group.name} (${group.id._serialized})`);
+        const groupId = group.id._serialized || group.id;
+        const groupName = group.name || `Group-${i + 1}`;
         
-        // Multiple retry attempts for each group
+        console.log(`[${i + 1}/${groups.length}] Processing: ${groupName} (${groupId})`);
+        
+        // Add small delay between groups to avoid rate limiting
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
         let participants = [];
         let retryCount = 0;
-        const maxRetries = 3;
+        const maxRetries = 2; // Reduced retries for faster execution
         
+        // Retry logic with exponential backoff
         while (retryCount < maxRetries) {
           try {
-            const result = await getGroupParticipants(group.id._serialized, client);
-            participants = result.participants;
+            const result = await getGroupParticipants(groupId, client);
+            participants = result.participants || [];
             
             if (participants.length > 0) {
+              console.log(`✅ Successfully got ${participants.length} participants from ${groupName}`);
               break; // Success, exit retry loop
+            } else {
+              console.warn(`⚠️ No participants found for ${groupName} (attempt ${retryCount + 1})`);
             }
           } catch (retryError) {
-            console.warn(`Retry ${retryCount + 1} failed for ${group.name}:`, retryError.message);
+            console.warn(`❌ Retry ${retryCount + 1} failed for ${groupName}: ${retryError.message}`);
           }
           
           retryCount++;
           if (retryCount < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait before retry
+            const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
 
         if (participants.length === 0) {
-          failedGroups.push(group.name);
-          console.warn(`Failed to get participants for group: ${group.name} after ${maxRetries} attempts`);
+          failedGroups.push(groupName);
+          console.warn(`❌ Failed to get participants for: ${groupName} after ${maxRetries} attempts`);
           continue;
         }
 
+        // Process participants with validation
+        let validParticipants = 0;
         participants.forEach(p => {
-          if (p.id && p.id !== "Unknown ID" && p.id !== "Unknown") {
+          if (p && p.id && typeof p.id === 'string' && p.id.includes('@c.us')) {
             uniqueUsers.add(p.id);
+            validParticipants++;
           }
         });
 
-        console.log(`Successfully scanned ${participants.length} members from group`);
+        totalParticipants += validParticipants;
+        processedGroups.push(`${groupName}: ${validParticipants} members`);
+        console.log(`✅ Added ${validParticipants} unique users from ${groupName}`);
         
       } catch (groupError) {
-        console.error(`Error processing group ${group.name}: ${groupError.message}`);
-        failedGroups.push(group.name);
+        const groupName = group.name || `Group-${i + 1}`;
+        console.error(`❌ Error processing ${groupName}:`, groupError.message);
+        failedGroups.push(groupName);
       }
     }
 
+    // Save results
     const phoneNumbers = Array.from(uniqueUsers);
-    fs.writeFileSync(groupMembersPath, JSON.stringify(phoneNumbers, null, 2));
+    
+    try {
+      fs.writeFileSync(groupMembersPath, JSON.stringify(phoneNumbers, null, 2));
+      console.log(`💾 Saved ${phoneNumbers.length} phone numbers to ${groupMembersPath}`);
+    } catch (saveError) {
+      console.error('Error saving group members:', saveError);
+      return '❌ שגיאה בשמירת נתוני החברים. בדוק הרשאות כתיבה.';
+    }
+
+    // Update in-memory array
     groupMembers.length = 0;
     groupMembers.push(...phoneNumbers);
 
-    console.log("Group scan completed!");
-    console.log(`Total unique phone numbers found: ${phoneNumbers.length}`);
+    console.log("✅ Group scan completed successfully!");
+    console.log(`📊 Statistics: ${phoneNumbers.length} unique users from ${processedGroups.length} groups`);
     
-    let result = `✅ סריקת קבוצות הושלמה בהצלחה!\n👥 נמצאו ${phoneNumbers.length} מספרי טלפון ייחודיים\n💾 הנתונים נשמרו ב-data/group_members.json`;
+    // Build detailed result message
+    let result = `✅ *סריקת קבוצות הושלמה בהצלחה!*\n\n`;
+    result += `👥 *תוצאות:*\n`;
+    result += `• ${phoneNumbers.length} מספרי טלפון ייחודיים\n`;
+    result += `• ${processedGroups.length}/${groups.length} קבוצות נסרקו בהצלחה\n`;
+    result += `• ${totalParticipants} סך משתתפים\n\n`;
+    result += `💾 *הנתונים נשמרו ב:* data/group_members.json\n`;
     
     if (failedGroups.length > 0) {
-      result += `\n⚠️ ${failedGroups.length} קבוצות נכשלו: ${failedGroups.join(', ')}`;
+      result += `\n⚠️ *קבוצות שנכשלו (${failedGroups.length}):*\n`;
+      result += failedGroups.slice(0, 5).map(name => `• ${name}`).join('\n');
+      if (failedGroups.length > 5) {
+        result += `\n• ועוד ${failedGroups.length - 5} קבוצות...`;
+      }
+    }
+    
+    if (processedGroups.length > 0) {
+      result += `\n\n📋 *פירוט קבוצות מוצלחות:*\n`;
+      result += processedGroups.slice(0, 10).map(group => `• ${group}`).join('\n');
+      if (processedGroups.length > 10) {
+        result += `\n• ועוד ${processedGroups.length - 10} קבוצות...`;
+      }
     }
     
     return result;
     
   } catch (error) {
-    console.error('Error scanning groups:', error);
-    return '❌ שגיאה בסריקת הקבוצות. אנא נסה שוב.';
+    console.error('Critical error in scanGroupMembers:', error);
+    return `❌ שגיאה קריטית בסריקת הקבוצות: ${error.message}`;
   }
 }
 async function broadcastMessage(message, botChatsPath, client) {
@@ -1765,83 +1850,291 @@ function listHighSchoolSubjects(menus) {
 }
 function addMenuOptionToMenu(menuName, optionNumber, text, value, menus) {
     try {
-        if (!menus[menuName]) {
-            return `❌ תפריט '${menuName}' לא קיים.`;
-        }
-        if (menus[menuName].options[optionNumber]) {
-            return `❌ אפשרות ${optionNumber} כבר קיימת בתפריט '${menuName}'. השתמש ב-/admin_update_menu_option לעדכון.`;
+        // Validate menu name
+        if (!menuName || menuName.trim() === '') {
+            return "❌ שם תפריט לא יכול להיות ריק.";
         }
 
-        const newOption = { text: text };
+        // Check if menu exists
+        if (!menus[menuName]) {
+            const availableMenus = Object.keys(menus).join(', ');
+            return `❌ תפריט '${menuName}' לא קיים במערכת.\n💡 תפריטים זמינים: ${availableMenus}`;
+        }
+
+        // Validate option number
+        if (!optionNumber || isNaN(optionNumber) || parseInt(optionNumber) < 1) {
+            return "❌ מספר אפשרות חייב להיות מספר חיובי תקין.";
+        }
+
+        // Validate text
+        if (!text || text.trim() === '') {
+            return "❌ טקסט האפשרות לא יכול להיות ריק.";
+        }
+
+        // Validate value
+        if (!value || value.trim() === '') {
+            return "❌ תגובה או ניווט חייבים להיות מוגדרים.";
+        }
+
+        // Initialize options if doesn't exist
+        if (!menus[menuName].options) {
+            menus[menuName].options = {};
+        }
+
+        // Check if option number already exists
+        if (menus[menuName].options[optionNumber]) {
+            return `❌ אפשרות מספר ${optionNumber} כבר קיימת בתפריט '${menuName}'.\n💡 השתמש ב-/admin_update_menu_option_in_menu לעדכון האפשרות הקיימת.`;
+        }
+
+        // Create the new option object
+        const newOption = { text: text.trim() };
+
+        // Check if it's a navigation or response
         if (value.startsWith("nextMenu:")) {
-            newOption.nextMenu = value.substring("nextMenu:".length).trim();
+            const targetMenu = value.substring("nextMenu:".length).trim();
+            
+            // Validate target menu exists
+            if (!menus[targetMenu]) {
+                return `❌ תפריט יעד '${targetMenu}' לא קיים במערכת.\n💡 וודא שהתפריט קיים לפני יצירת ניווט אליו.`;
+            }
+            
+            newOption.nextMenu = targetMenu;
+            
+            // Add special properties for specific menu types
+            if (targetMenu === 'course_number_input' && menuName === 'semester_selection') {
+                // Handle semester selection special case
+                const semesterMap = {
+                    '1': '2025א',
+                    '2': '2025ב',
+                    '3': '2025ג'
+                };
+                if (semesterMap[optionNumber]) {
+                    newOption.semester = semesterMap[optionNumber];
+                }
+            }
+            
+            console.log(`[ADMIN] Adding navigation option ${optionNumber} in menu '${menuName}' -> '${targetMenu}'`);
         } else {
             newOption.response = value;
+            console.log(`[ADMIN] Adding response option ${optionNumber} in menu '${menuName}'`);
         }
 
+        // Add the option
         menus[menuName].options[optionNumber] = newOption;
 
+        // Update menu message for different menu types
+        if (menuName === 'main') {
+            updateMainMenuMessage(menus);
+        } else if (menuName === 'faq_menu') {
+            updateFAQMenuMessage(menus);
+        } else if (menuName === 'teacher_highschool_input') {
+            updateHighSchoolMenuMessage(menus);
+        } else {
+            // For other menus, update the message to include all options
+            updateGenericMenuMessage(menuName, menus);
+        }
+
+        // Save the changes
         if (saveJSONFile("menus.json", menus)) {
-            return `✅ אפשרות ${optionNumber} נוספה בהצלחה לתפריט '${menuName}'.`;
+            let successMsg = `✅ אפשרות ${optionNumber} נוספה בהצלחה לתפריט '${menuName}'.\n`;
+            successMsg += `📝 טקסט: ${text}\n`;
+            if (newOption.nextMenu) {
+                successMsg += `➡️ מוביל לתפריט: ${newOption.nextMenu}`;
+            } else {
+                successMsg += `💬 תגובה: ${newOption.response.substring(0, 50)}${newOption.response.length > 50 ? '...' : ''}`;
+            }
+            return successMsg;
         }
         return "❌ שגיאה בשמירת השינויים.";
     } catch (error) {
         console.error("Error in addMenuOptionToMenu:", error);
-        return "❌ שגיאה בהוספת אפשרות לתפריט.";
+        return `❌ שגיאה בהוספת אפשרות לתפריט: ${error.message}`;
     }
 }
 
 function updateMenuOptionInMenu(menuName, optionNumber, newText, newValue, menus) {
     try {
-        if (!menus[menuName]) {
-            return `❌ תפריט '${menuName}' לא קיים.`;
-        }
-        if (!menus[menuName].options[optionNumber]) {
-            return `❌ אפשרות ${optionNumber} לא קיימת בתפריט '${menuName}'. השתמש ב-/admin_add_menu_option להוספה.`;
+        // Validate menu name
+        if (!menuName || menuName.trim() === '') {
+            return "❌ שם תפריט לא יכול להיות ריק.";
         }
 
-        menus[menuName].options[optionNumber].text = newText;
+        // Check if menu exists
+        if (!menus[menuName]) {
+            const availableMenus = Object.keys(menus).join(', ');
+            return `❌ תפריט '${menuName}' לא קיים במערכת.\n💡 תפריטים זמינים: ${availableMenus}`;
+        }
+
+        // Validate option number
+        if (!optionNumber || isNaN(optionNumber) || parseInt(optionNumber) < 1) {
+            return "❌ מספר אפשרות חייב להיות מספר חיובי תקין.";
+        }
+
+        // Check if option exists
+        if (!menus[menuName].options || !menus[menuName].options[optionNumber]) {
+            const existingOptions = menus[menuName].options ? Object.keys(menus[menuName].options).join(', ') : 'אין אפשרויות';
+            return `❌ אפשרות ${optionNumber} לא קיימת בתפריט '${menuName}'.\n💡 אפשרויות קיימות: ${existingOptions}\n💡 השתמש ב-/admin_add_menu_option_to_menu להוספת אפשרות חדשה.`;
+        }
+
+        // Validate new text
+        if (!newText || newText.trim() === '') {
+            return "❌ טקסט חדש לא יכול להיות ריק.";
+        }
+
+        // Validate new value
+        if (!newValue || newValue.trim() === '') {
+            return "❌ תגובה או ניווט חדשים חייבים להיות מוגדרים.";
+        }
+
+        // Store old values for comparison
+        const oldOption = { ...menus[menuName].options[optionNumber] };
+
+        // Update the text
+        menus[menuName].options[optionNumber].text = newText.trim();
+
+        // Update navigation or response
         if (newValue.startsWith("nextMenu:")) {
-            menus[menuName].options[optionNumber].nextMenu = newValue.substring("nextMenu:".length).trim();
-            delete menus[menuName].options[optionNumber].response; // Remove response if it was a nextMenu
+            const targetMenu = newValue.substring("nextMenu:".length).trim();
+            
+            // Validate target menu exists
+            if (!menus[targetMenu]) {
+                return `❌ תפריט יעד '${targetMenu}' לא קיים במערכת.\n💡 וודא שהתפריט קיים לפני יצירת ניווט אליו.`;
+            }
+            
+            menus[menuName].options[optionNumber].nextMenu = targetMenu;
+            delete menus[menuName].options[optionNumber].response; // Remove response if changing to navigation
+            
+            // Handle special cases for semester selection
+            if (targetMenu === 'course_number_input' && menuName === 'semester_selection') {
+                const semesterMap = {
+                    '1': '2025א',
+                    '2': '2025ב',
+                    '3': '2025ג'
+                };
+                if (semesterMap[optionNumber]) {
+                    menus[menuName].options[optionNumber].semester = semesterMap[optionNumber];
+                }
+            }
+            
+            console.log(`[ADMIN] Updated option ${optionNumber} in menu '${menuName}' to navigate to '${targetMenu}'`);
         } else {
             menus[menuName].options[optionNumber].response = newValue;
-            delete menus[menuName].options[optionNumber].nextMenu; // Remove nextMenu if it was a response
+            delete menus[menuName].options[optionNumber].nextMenu; // Remove nextMenu if changing to response
+            
+            // Remove special properties when changing from navigation to response
+            delete menus[menuName].options[optionNumber].semester;
+            delete menus[menuName].options[optionNumber].teachingLevel;
+            
+            console.log(`[ADMIN] Updated option ${optionNumber} in menu '${menuName}' with response`);
         }
 
+        // Update menu message for different menu types
+        if (menuName === 'main') {
+            updateMainMenuMessage(menus);
+        } else if (menuName === 'faq_menu') {
+            updateFAQMenuMessage(menus);
+        } else if (menuName === 'teacher_highschool_input') {
+            updateHighSchoolMenuMessage(menus);
+        } else {
+            // For other menus, update the generic message
+            updateGenericMenuMessage(menuName, menus);
+        }
+
+        // Save the changes
         if (saveJSONFile("menus.json", menus)) {
-            return `✅ אפשרות ${optionNumber} בתפריט '${menuName}' עודכנה בהצלחה.`;
+            let successMsg = `✅ אפשרות ${optionNumber} בתפריט '${menuName}' עודכנה בהצלחה.\n`;
+            successMsg += `📝 טקסט קודם: ${oldOption.text}\n`;
+            successMsg += `📝 טקסט חדש: ${newText}\n`;
+            
+            if (menus[menuName].options[optionNumber].nextMenu) {
+                successMsg += `➡️ מוביל לתפריט: ${menus[menuName].options[optionNumber].nextMenu}`;
+            } else {
+                const responsePreview = menus[menuName].options[optionNumber].response;
+                successMsg += `💬 תגובה: ${responsePreview.substring(0, 50)}${responsePreview.length > 50 ? '...' : ''}`;
+            }
+            
+            return successMsg;
         }
         return "❌ שגיאה בשמירת השינויים.";
     } catch (error) {
         console.error("Error in updateMenuOptionInMenu:", error);
-        return "❌ שגיאה בעדכון אפשרות התפריט.";
+        return `❌ שגיאה בעדכון אפשרות התפריט: ${error.message}`;
     }
 }
 
 function removeMenuOptionFromMenu(menuName, optionNumber, menus) {
     try {
-        if (!menus[menuName]) {
-            return `❌ תפריט '${menuName}' לא קיים.`;
-        }
-        if (!menus[menuName].options[optionNumber]) {
-            return `❌ אפשרות ${optionNumber} לא קיימת בתפריט '${menuName}'.`;
+        // Validate menu name
+        if (!menuName || menuName.trim() === '') {
+            return "❌ שם תפריט לא יכול להיות ריק.";
         }
 
+        // Check if menu exists
+        if (!menus[menuName]) {
+            const availableMenus = Object.keys(menus).join(', ');
+            return `❌ תפריט '${menuName}' לא קיים.\n💡 תפריטים זמינים: ${availableMenus}`;
+        }
+
+        // Check if options exist
+        if (!menus[menuName].options || !menus[menuName].options[optionNumber]) {
+            const existingOptions = menus[menuName].options ? Object.keys(menus[menuName].options).join(', ') : 'אין אפשרויות';
+            return `❌ אפשרות ${optionNumber} לא קיימת בתפריט '${menuName}'.\n💡 אפשרויות קיימות: ${existingOptions}`;
+        }
+
+        // Store the option text for the success message
+        const optionText = menus[menuName].options[optionNumber].text || '';
+        const deletedNumber = parseInt(optionNumber);
+        
+        // Delete the option
         delete menus[menuName].options[optionNumber];
 
-        // If this is the FAQ menu, update the message after removal
+        // Get all remaining numeric option keys
+        const remainingKeys = Object.keys(menus[menuName].options)
+            .map(key => parseInt(key))
+            .filter(num => !isNaN(num))
+            .sort((a, b) => a - b);
+
+        console.log(`[DEBUG] Before renumbering - remaining keys:`, remainingKeys);
+
+        // Create a new options object with sequential numbering starting from 1
+        const newOptions = {};
+        remainingKeys.forEach((oldKey, index) => {
+            const newKey = (index + 1).toString();
+            newOptions[newKey] = menus[menuName].options[oldKey.toString()];
+            console.log(`[DEBUG] Renumbering: ${oldKey} -> ${newKey} (${menus[menuName].options[oldKey.toString()].text})`);
+        });
+
+        // Replace the old options with the renumbered ones
+        menus[menuName].options = newOptions;
+
+        // Update the menu message for specific menus or use generic update
         if (menuName === 'faq_menu') {
             updateFAQMenuMessage(menus);
+        } else if (menuName === 'main') {
+            updateMainMenuMessage(menus);
+        } else if (menuName === 'teacher_highschool_input') {
+            updateHighSchoolMenuMessage(menus);
+        } else {
+            // For other menus, update the generic message
+            updateGenericMenuMessage(menuName, menus);
         }
 
+        // Count how many options were renumbered
+        const renumberedCount = remainingKeys.filter(key => key > deletedNumber).length;
+
+        // Save the changes
         if (saveJSONFile("menus.json", menus)) {
-            return `✅ אפשרות ${optionNumber} נמחקה בהצלחה מהתפריט '${menuName}'.`;
+            let successMsg = `✅ אפשרות ${optionNumber} "${optionText}" נמחקה בהצלחה מהתפריט '${menuName}'.`;
+            if (renumberedCount > 0) {
+                successMsg += `\n🔄 ${renumberedCount} אפשרויות מוספרו מחדש אוטומטית.`;
+            }
+            successMsg += `\n📊 כעת יש ${Object.keys(newOptions).length} אפשרויות בתפריט.`;
+            return successMsg;
         }
         return "❌ שגיאה בשמירת השינויים.";
     } catch (error) {
         console.error("Error in removeMenuOptionFromMenu:", error);
-        return "❌ שגיאה במחיקת אפשרות התפריט.";
+        return `❌ שגיאה במחיקת אפשרות התפריט: ${error.message}`;
     }
 }
 // Specialized function for adding options to FAQ menu with automatic numbering and message update
@@ -1953,6 +2246,84 @@ async function performHealthCheck(client) {
     return false;
   }
 }
+
+// Helper function to update generic menu message to include all options
+function updateGenericMenuMessage(menuName, menus) {
+    try {
+        if (!menus[menuName] || !menus[menuName].options) return;
+        
+        const options = menus[menuName].options;
+        const sortedKeys = Object.keys(options)
+            .map(key => parseInt(key))
+            .filter(num => !isNaN(num))
+            .sort((a, b) => a - b);
+        
+        if (sortedKeys.length === 0) return;
+        
+        // Build message with current options plus all existing options
+        let message = "אנא בחרו מהאפשרויות הבאות:\n\n";
+        
+        // Add each option to the message with proper RTL handling
+        sortedKeys.forEach(optionNum => {
+            const option = options[optionNum.toString()];
+            if (option && option.text) {
+                // Check if text starts with English/Latin characters or quotes
+                const startsWithEnglish = /^[a-zA-Z0-9"'`]/.test(option.text);
+                if (startsWithEnglish) {
+                    // For English text starting lines, use RTL embedding to ensure proper number placement
+                    // \u202B is Right-to-Left Embedding (RLE) 
+                    // \u202C is Pop Directional Formatting (PDF)
+                    message += `\u202B${optionNum}. ${option.text}\u202C\n`;
+                } else {
+                    // For Hebrew/Arabic text, normal display
+                    message += `${optionNum}. ${option.text}\n`;
+                }
+            }
+        });
+        
+        // Add footer instructions
+        message += "\nאנא השיבו עם המספר של בחירתכם.\n\n";
+        message += "'חזור' - חזרה לתפריט הקודם\n";
+        message += "'0' - חזרה מהירה לתפריט הראשי\n\n";
+        message += "שימו לב, ייתכן ויקח כמה שניות לטעינת ההודעה מכיוון שהיא מכילה קישור";
+        
+        menus[menuName].message = message;
+        
+        console.log(`Generic menu message updated successfully for: ${menuName}`);
+    } catch (error) {
+        console.error(`Error in updateGenericMenuMessage for ${menuName}:`, error);
+    }
+}
+
+// Helper function to renumber menu options to maintain sequential order
+function renumberMenuOptions(menuOptions) {
+    try {
+        // Get all numeric keys and sort them
+        const numericKeys = Object.keys(menuOptions)
+            .map(key => parseInt(key))
+            .filter(num => !isNaN(num))
+            .sort((a, b) => a - b);
+        
+        // Create new options object with sequential numbering
+        const renumberedOptions = {};
+        numericKeys.forEach((oldKey, index) => {
+            const newKey = (index + 1).toString();
+            renumberedOptions[newKey] = menuOptions[oldKey.toString()];
+        });
+        
+        // Preserve any non-numeric keys (if any)
+        Object.keys(menuOptions).forEach(key => {
+            if (isNaN(parseInt(key))) {
+                renumberedOptions[key] = menuOptions[key];
+            }
+        });
+        
+        return renumberedOptions;
+    } catch (error) {
+        console.error('Error in renumberMenuOptions:', error);
+        return menuOptions; // Return original if error occurs
+    }
+}
 module.exports = {
     isMessageBeingProcessed,
     isUserOnCooldown,
@@ -2006,5 +2377,6 @@ module.exports = {
     updateFAQMenuMessage,
     addFAQOption,
     isValidGroup,
-    performHealthCheck
+    performHealthCheck,
+    renumberMenuOptions
 };
